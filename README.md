@@ -15,7 +15,7 @@ Xiaozhi / imcp.pro
 ## Yêu cầu
 
 - Node.js 18+
-- Moodle đã cài `local_damirobot_api` bản v1.0.8 trở lên
+- Moodle đã cài `local_damirobot_api` bản v1.0.16 trở lên
 - API token của `local_damirobot_api`
 
 ## Biến môi trường
@@ -102,6 +102,7 @@ Environment Variables như trên.
 - `get_student_suspend_status`
 - `get_student_dami_status`
 - `get_student_latest_scores`
+- `get_student_fulltest_history`
 - `get_student_goal_status`
 - `get_course_risk_students`
 
@@ -139,3 +140,10 @@ This server expects Moodle API `emotion` values to use Xiaozhi official emotion 
 
 - Pin `@modelcontextprotocol/sdk` to `1.29.0` instead of `latest` for more stable imcp/npx installs.
 - No schema/tool behavior changes.
+
+
+## v0.1.8
+
+- README tool list updated to include `get_student_fulltest_history`.
+- Clean package for GitHub/imcp: no `node_modules`, no `package-lock.json`, no `.env` token file.
+- Keeps context guard from v0.1.7: when a new `student_name`/email is supplied, old `userid` context is not reused.
