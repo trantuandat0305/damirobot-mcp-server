@@ -111,3 +111,31 @@ Environment Variables như trên.
 - Không chứa token trong code.
 - Không sửa/xóa/đình chỉ/check-in/feed DAMI.
 - Token phải đặt trong Environment Variables.
+
+
+## v0.1.1
+
+- Added MCP tool `get_student_fulltest_history`.
+- This tool is for questions about recent FULL TEST/LR history, several latest tests, score trend, and whether scores are improving or dropping.
+- No tokens are stored in code; keep Moodle token in environment variables only.
+
+
+## Emotion metadata
+
+Moodle API v1.0.11+ may return `emotion` and `emotion_label`. This MCP server forwards it as `Emotion: ...` metadata and instructs the AI to use it as speaking style only, not to read the emotion label aloud.
+
+
+## Xiaozhi emotion compatibility
+
+This server expects Moodle API `emotion` values to use Xiaozhi official emotion names such as `neutral`, `happy`, `thinking`, `sad`, `confused`, and `confident`. If a tool fails before Moodle returns metadata, the server uses `sad` for the error fallback.
+
+
+## v0.1.5
+- Metadata/user-agent version aligned with package version.
+- No tool/schema change from v0.1.3.
+
+
+## 0.1.5
+
+- Pin `@modelcontextprotocol/sdk` to `1.29.0` instead of `latest` for more stable imcp/npx installs.
+- No schema/tool behavior changes.

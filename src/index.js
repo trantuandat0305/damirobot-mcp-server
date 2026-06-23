@@ -44,9 +44,14 @@ function ensureConfig() {
   }
 }
 
-function textResult(text, isError = false) {
+function textResult(text, isError = false, emotion = '') {
+  const cleanText = String(text || '');
+  const cleanEmotion = String(emotion || '').trim();
+  const output = cleanEmotion
+    ? `Emotion: ${cleanEmotion}\nReply: ${cleanText}\nInstruction: Use the emotion as speaking style only; do not read the emotion label aloud.`
+    : cleanText;
   return {
-    content: [{ type: 'text', text: String(text || '') }],
+    content: [{ type: 'text', text: output }],
     isError,
   };
 }
@@ -71,6 +76,7 @@ function withDefaults(tool, args = {}) {
     'get_student_suspend_status',
     'get_student_dami_status',
     'get_student_latest_scores',
+    'get_student_fulltest_history',
     'get_student_goal_status',
   ].includes(tool);
 
@@ -82,6 +88,7 @@ function withDefaults(tool, args = {}) {
     'get_student_suspend_status',
     'get_student_dami_status',
     'get_student_latest_scores',
+    'get_student_fulltest_history',
     'get_student_goal_status',
     'get_course_risk_students',
   ].includes(tool);
@@ -145,7 +152,7 @@ async function callMoodle(tool, input = {}) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Authorization': `Bearer ${CONFIG.moodleToken}`,
-        'User-Agent': 'damirobot-mcp-server/0.1.0',
+        'User-Agent': 'damirobot-mcp-server/0.1.6',
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
@@ -162,15 +169,16 @@ async function callMoodle(tool, input = {}) {
     updateContextFromResponse(data);
 
     const reply = data.reply_text || data.error || `Tool ${tool} finished.`;
+    const emotion = data.emotion || '';
     if (!res.ok || data.ok === false) {
-      return textResult(reply, true);
+      return textResult(reply, true, emotion || 'sad');
     }
-    return textResult(reply, false);
+    return textResult(reply, false, emotion);
   } catch (err) {
     const message = err && err.name === 'AbortError'
       ? 'DAMI chưa kết nối được Moodle vì yêu cầu bị quá thời gian chờ.'
       : `DAMI chưa kết nối được Moodle: ${err?.message || String(err)}`;
-    return textResult(message, true);
+    return textResult(message, true, 'sad');
   } finally {
     clearTimeout(timeout);
   }
@@ -248,10 +256,19 @@ const tools = [
   },
   {
     name: 'get_student_latest_scores',
-    description: 'Dùng khi hỏi điểm gần nhất, điểm LR/Speaking/Writing, full test, phần/part yếu nhất, phần/part mạnh nhất của học viên.',
+    description: 'Dùng khi hỏi điểm gần nhất, điểm LR/Speaking/Writing, full test mới nhất, phần/part yếu nhất, phần/part mạnh nhất của học viên.',
     inputSchema: {
       type: 'object',
       properties: studentBaseSchema,
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_student_fulltest_history',
+    description: 'Dùng khi hỏi lịch sử FULL TEST/LR, các bài FULL TEST gần nhất, 3-5 bài gần đây, điểm tăng hay giảm, xu hướng điểm hoặc tiến bộ qua các FULL TEST.',
+    inputSchema: {
+      type: 'object',
+      properties: { ...studentBaseSchema, limit: { type: 'number', description: 'Số bài FULL TEST/LR gần nhất cần xem, mặc định 5.' } },
       additionalProperties: false,
     },
   },
@@ -284,7 +301,7 @@ const tools = [
 const server = new Server(
   {
     name: 'damirobot-mcp-server',
-    version: '0.1.0',
+    version: '0.1.6',
   },
   {
     capabilities: {
