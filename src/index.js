@@ -18,6 +18,26 @@ const CONFIG = {
   logLevel: process.env.LOG_LEVEL || 'info',
 };
 
+function hasValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+function normalizeToolInput(tool, args = {}) {
+  const out = { ...args };
+  // Guard: if a client accidentally sends a numeric student_name, treat it as userid.
+  // This prevents calls like {student_name: "297"} from being searched as a name.
+  if (!hasValue(out.userid) && hasValue(out.student_name) && /^\d+$/.test(String(out.student_name).trim())) {
+    out.userid = String(out.student_name).trim();
+    delete out.student_name;
+  }
+  return out;
+}
+
+function clearStudentContext() {
+  context.userid = '';
+  context.student_name = '';
+}
+
 const context = {
   userid: CONFIG.defaultUserId || '',
   student_name: '',
@@ -67,7 +87,7 @@ function pick(obj, keys) {
 }
 
 function withDefaults(tool, args = {}) {
-  const merged = { ...args };
+  const merged = normalizeToolInput(tool, args);
 
   const needsStudent = [
     'get_student_summary',
@@ -94,29 +114,45 @@ function withDefaults(tool, args = {}) {
   ].includes(tool);
 
   if (needsStudent) {
-    if (!merged.userid && context.userid) merged.userid = context.userid;
-    if (!merged.student_name && context.student_name) merged.student_name = context.student_name;
+    const explicitUserid = hasValue(merged.userid);
+    const explicitStudentName = hasValue(merged.student_name);
+    const explicitEmail = hasValue(merged.email);
+
+    // If the client explicitly supplies a new name/email, do NOT inject the old userid.
+    // Otherwise Moodle will prioritise the stale userid and answer for the previous student.
+    if (!explicitUserid && !explicitStudentName && !explicitEmail) {
+      if (context.userid) merged.userid = context.userid;
+      else if (context.student_name) merged.student_name = context.student_name;
+    }
   }
 
   if (needsCourse) {
-    if (!merged.courseid && context.courseid) merged.courseid = context.courseid;
-    if (!merged.groupid && context.groupid) merged.groupid = context.groupid;
+    if (!hasValue(merged.courseid) && context.courseid) merged.courseid = context.courseid;
+    if (!hasValue(merged.groupid) && context.groupid) merged.groupid = context.groupid;
   }
 
   return merged;
 }
 
-function updateContextFromArgs(args = {}) {
-  if (args.userid) context.userid = String(args.userid);
-  if (args.student_name) context.student_name = String(args.student_name);
-  if (args.courseid) context.courseid = String(args.courseid);
-  if (args.groupid) context.groupid = String(args.groupid);
-}
+function updateContextAfterCall(tool, args = {}, data = {}) {
+  if (hasValue(args.courseid)) context.courseid = String(args.courseid);
+  if (hasValue(args.groupid)) context.groupid = String(args.groupid);
 
-function updateContextFromResponse(data) {
   if (!data || typeof data !== 'object') return;
+
+  // When a lookup is ambiguous/not found, clear the student context so follow-up pronouns
+  // do not accidentally keep referring to the previous learner.
+  if (data.ok === false && (data.need_clarification || data.error === 'student_ambiguous' || data.error === 'student_not_found')) {
+    clearStudentContext();
+    return;
+  }
+
   if (data.student && data.student.id) context.userid = String(data.student.id);
+  else if (hasValue(args.userid)) context.userid = String(args.userid);
+
   if (data.student && data.student.name) context.student_name = String(data.student.name);
+  else if (hasValue(args.student_name) && !hasValue(args.userid)) context.student_name = String(args.student_name);
+
   if (data.course && data.course.id) context.courseid = String(data.course.id);
   if (data.group && data.group.id) context.groupid = String(data.group.id);
 
@@ -131,7 +167,6 @@ async function callMoodle(tool, input = {}) {
   ensureConfig();
 
   const args = withDefaults(tool, input);
-  updateContextFromArgs(args);
 
   const voice = tool === 'find_student' ? false : CONFIG.voice;
   const payload = {
@@ -152,7 +187,7 @@ async function callMoodle(tool, input = {}) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Authorization': `Bearer ${CONFIG.moodleToken}`,
-        'User-Agent': 'damirobot-mcp-server/0.1.6',
+        'User-Agent': 'damirobot-mcp-server/0.1.7',
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
@@ -166,7 +201,7 @@ async function callMoodle(tool, input = {}) {
       throw new Error(`Moodle API returned non-JSON response. HTTP ${res.status}. Body: ${raw.slice(0, 300)}`);
     }
 
-    updateContextFromResponse(data);
+    updateContextAfterCall(tool, args, data);
 
     const reply = data.reply_text || data.error || `Tool ${tool} finished.`;
     const emotion = data.emotion || '';
@@ -301,7 +336,7 @@ const tools = [
 const server = new Server(
   {
     name: 'damirobot-mcp-server',
-    version: '0.1.6',
+    version: '0.1.7',
   },
   {
     capabilities: {
