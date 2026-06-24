@@ -1,4 +1,2 @@
 @echo off
-cd /d %~dp0\..
-npm start
-pause
+node .\src\index.js

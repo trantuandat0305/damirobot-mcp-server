@@ -1,7 +1,7 @@
 {
   "name": "damirobot-mcp-server",
-  "version": "0.1.9",
-  "description": "MCP stdio server for Xiaozhi/imcp to query DAMI Moodle Robot API.",
+  "version": "0.2.0",
+  "description": "Zero-dependency MCP stdio server for Xiaozhi/imcp to query DAMI Moodle Robot API.",
   "type": "module",
   "bin": {
     "damirobot-mcp-server": "./src/index.js"
@@ -13,9 +13,7 @@
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0"
-  },
+  "dependencies": {},
   "keywords": [
     "mcp",
     "xiaozhi",
