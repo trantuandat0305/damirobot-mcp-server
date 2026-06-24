@@ -163,6 +163,14 @@ function updateContextAfterCall(tool, args = {}, data = {}) {
   }
 }
 
+function buildMoodleUrl() {
+  const endpoint = String(CONFIG.moodleEndpoint || '').trim();
+  if (/^https?:\/\//i.test(endpoint)) {
+    return endpoint;
+  }
+  return `${CONFIG.moodleBaseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+}
+
 async function callMoodle(tool, input = {}) {
   ensureConfig();
 
@@ -176,7 +184,7 @@ async function callMoodle(tool, input = {}) {
     voice: voice ? 1 : 0,
   };
 
-  const url = `${CONFIG.moodleBaseUrl}${CONFIG.moodleEndpoint.startsWith('/') ? '' : '/'}${CONFIG.moodleEndpoint}`;
+  const url = buildMoodleUrl();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONFIG.timeoutMs);
 
@@ -187,7 +195,7 @@ async function callMoodle(tool, input = {}) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Authorization': `Bearer ${CONFIG.moodleToken}`,
-        'User-Agent': 'damirobot-mcp-server/0.1.7',
+        'User-Agent': 'damirobot-mcp-server/0.1.9',
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
@@ -336,7 +344,7 @@ const tools = [
 const server = new Server(
   {
     name: 'damirobot-mcp-server',
-    version: '0.1.7',
+    version: '0.1.9',
   },
   {
     capabilities: {

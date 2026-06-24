@@ -25,7 +25,7 @@ Không đưa token vào GitHub. Khi chạy local, copy `.env.example` thành `.e
 ```env
 MOODLE_BASE_URL=https://elearning.anhngumsmy.com
 MOODLE_API_TOKEN=PASTE_MOODLE_API_TOKEN_HERE
-MOODLE_TOOL_ENDPOINT=/local/damirobot_api/api/tool.php
+MOODLE_TOOL_ENDPOINT=https://elearning.anhngumsmy.com/local/damirobot_api/api/tool.php
 DEFAULT_COURSEID=4
 DEFAULT_USERID=
 DEFAULT_GROUPID=
@@ -147,3 +147,10 @@ This server expects Moodle API `emotion` values to use Xiaozhi official emotion 
 - README tool list updated to include `get_student_fulltest_history`.
 - Clean package for GitHub/imcp: no `node_modules`, no `package-lock.json`, no `.env` token file.
 - Keeps context guard from v0.1.7: when a new `student_name`/email is supplied, old `userid` context is not reused.
+
+
+## v0.1.9
+
+- Fix binding/environment validation on some MCP marketplaces: `MOODLE_TOOL_ENDPOINT` may now be either a relative path or a full URL.
+- Recommended for imcp.pro Bind form: use the full URL `https://elearning.anhngumsmy.com/local/damirobot_api/api/tool.php`.
+- Package/server/user-agent version aligned to 0.1.9.
