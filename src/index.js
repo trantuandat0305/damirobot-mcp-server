@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const SERVER_NAME = 'damirobot-mcp-server';
-const SERVER_VERSION = '0.2.1';
+const SERVER_VERSION = '0.2.2';
 
 const CONFIG = {
   moodleBaseUrl: cleanBaseUrl(process.env.MOODLE_BASE_URL || ''),
@@ -13,16 +13,16 @@ const CONFIG = {
   voice: String(process.env.VOICE || '1') !== '0',
   timeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 15000),
   logLevel: process.env.LOG_LEVEL || 'info',
-  speakerGuard: String(process.env.MCP_SPEAKER_GUARD || '1') !== '0',
   allowedSpeakerIds: new Set(
     String(process.env.ALLOWED_SPEAKER_IDS || '')
       .split(',')
-      .map((value) => value.trim())
+      .map(normalizeSpeakerId)
       .filter(Boolean)
   ),
 };
 
 const context = {
+  speaker_id: '',
   userid: CONFIG.defaultUserId || '',
   student_name: '',
   courseid: CONFIG.defaultCourseId || '',
@@ -123,24 +123,51 @@ function log(...args) {
   if (CONFIG.logLevel === 'debug') console.error('[damirobot-mcp]', ...args);
 }
 
+function normalizeSpeakerId(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  const id = String(value).trim();
+  if (!id || id.length > 256) return '';
+  if (/^(null|undefined|unknown|anonymous|guest|none)$/i.test(id)) return '';
+  return id;
+}
+
 function getSpeakerId(params = {}) {
-  const value = params?.speakerId ?? params?._meta?.speakerId ?? '';
-  return hasValue(value) ? String(value).trim() : '';
+  // Trust only broker-controlled top-level metadata. Never read speakerId from arguments,
+  // because arguments are model/tool input and must not be able to grant authorization.
+  return normalizeSpeakerId(params?.speakerId) || normalizeSpeakerId(params?._meta?.speakerId);
 }
 
 function authorizeSpeaker(params = {}) {
-  if (!CONFIG.speakerGuard) return { ok: true, reason: 'guard_disabled' };
   const speakerId = getSpeakerId(params);
-  if (!speakerId) return { ok: false, reason: 'speaker_unrecognized' };
+  if (!speakerId) return { ok: false, reason: 'speaker_unrecognized', speakerId: '' };
   if (CONFIG.allowedSpeakerIds.size > 0 && !CONFIG.allowedSpeakerIds.has(speakerId)) {
-    return { ok: false, reason: 'speaker_not_whitelisted' };
+    return { ok: false, reason: 'speaker_not_whitelisted', speakerId };
   }
-  return { ok: true, reason: 'speaker_recognized' };
+  return { ok: true, reason: 'speaker_recognized', speakerId };
 }
 
 function clearStudentContext() {
   context.userid = '';
   context.student_name = '';
+}
+
+function clearConversationContext() {
+  clearStudentContext();
+  context.courseid = CONFIG.defaultCourseId || '';
+  context.groupid = CONFIG.defaultGroupId || '';
+}
+
+function clearSpeakerContext() {
+  clearConversationContext();
+  context.speaker_id = '';
+}
+
+function bindSpeakerContext(speakerId) {
+  if (context.speaker_id && context.speaker_id !== speakerId) {
+    // Never carry a student's follow-up context from one recognized speaker to another.
+    clearConversationContext();
+  }
+  context.speaker_id = speakerId;
 }
 
 function normalizeToolInput(args = {}) {
@@ -306,7 +333,6 @@ async function handleRequest(req) {
   if (!req || typeof req !== 'object') return errorResponse(null, -32600, 'Invalid Request');
   const { id, method, params } = req;
 
-  // Notifications have no id; do not respond.
   const isNotification = id === undefined || id === null;
 
   try {
@@ -330,21 +356,23 @@ async function handleRequest(req) {
       case 'tools/call': {
         const name = params?.name;
         const args = params?.arguments || {};
-        if (!toolNames.has(name)) return { jsonrpc: '2.0', id, result: textResult(`Tool không hợp lệ: ${name}`, true) };
+        if (!toolNames.has(name)) {
+          return { jsonrpc: '2.0', id, result: textResult(`Tool không hợp lệ: ${name}`, true) };
+        }
 
-        // Keep technical health checks available so Xiaozhi can verify the MCP link.
-        // Every student-data tool is fail-closed and requires Xiaozhi speaker recognition.
+        // Technical health check exposes no student data. Every other tool is mandatory fail-closed.
         if (name !== 'test_connection') {
           const auth = authorizeSpeaker(params);
           if (!auth.ok) {
-            clearStudentContext();
+            clearSpeakerContext();
             log(`Blocked ${name}: ${auth.reason}`);
             return {
               jsonrpc: '2.0',
               id,
-              result: textResult('DAMI không được phép truy cập dữ liệu học viên cho người chưa được nhận diện ạ.', true, 'confused'),
+              result: textResult('DAMI không được phép truy cập dữ liệu học viên cho người chưa được cấp quyền ạ.', true, 'confused'),
             };
           }
+          bindSpeakerContext(auth.speakerId);
         }
 
         const result = await callMoodle(name, args);
