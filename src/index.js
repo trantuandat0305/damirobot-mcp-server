@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const SERVER_NAME = 'damirobot-mcp-server';
-const SERVER_VERSION = '0.2.0';
+const SERVER_VERSION = '0.2.1';
 
 const CONFIG = {
   moodleBaseUrl: cleanBaseUrl(process.env.MOODLE_BASE_URL || ''),
@@ -13,6 +13,13 @@ const CONFIG = {
   voice: String(process.env.VOICE || '1') !== '0',
   timeoutMs: Number(process.env.REQUEST_TIMEOUT_MS || 15000),
   logLevel: process.env.LOG_LEVEL || 'info',
+  speakerGuard: String(process.env.MCP_SPEAKER_GUARD || '1') !== '0',
+  allowedSpeakerIds: new Set(
+    String(process.env.ALLOWED_SPEAKER_IDS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+  ),
 };
 
 const context = {
@@ -114,6 +121,21 @@ function hasValue(value) {
 
 function log(...args) {
   if (CONFIG.logLevel === 'debug') console.error('[damirobot-mcp]', ...args);
+}
+
+function getSpeakerId(params = {}) {
+  const value = params?.speakerId ?? params?._meta?.speakerId ?? '';
+  return hasValue(value) ? String(value).trim() : '';
+}
+
+function authorizeSpeaker(params = {}) {
+  if (!CONFIG.speakerGuard) return { ok: true, reason: 'guard_disabled' };
+  const speakerId = getSpeakerId(params);
+  if (!speakerId) return { ok: false, reason: 'speaker_unrecognized' };
+  if (CONFIG.allowedSpeakerIds.size > 0 && !CONFIG.allowedSpeakerIds.has(speakerId)) {
+    return { ok: false, reason: 'speaker_not_whitelisted' };
+  }
+  return { ok: true, reason: 'speaker_recognized' };
 }
 
 function clearStudentContext() {
@@ -309,6 +331,22 @@ async function handleRequest(req) {
         const name = params?.name;
         const args = params?.arguments || {};
         if (!toolNames.has(name)) return { jsonrpc: '2.0', id, result: textResult(`Tool không hợp lệ: ${name}`, true) };
+
+        // Keep technical health checks available so Xiaozhi can verify the MCP link.
+        // Every student-data tool is fail-closed and requires Xiaozhi speaker recognition.
+        if (name !== 'test_connection') {
+          const auth = authorizeSpeaker(params);
+          if (!auth.ok) {
+            clearStudentContext();
+            log(`Blocked ${name}: ${auth.reason}`);
+            return {
+              jsonrpc: '2.0',
+              id,
+              result: textResult('DAMI không được phép truy cập dữ liệu học viên cho người chưa được nhận diện ạ.', true, 'confused'),
+            };
+          }
+        }
+
         const result = await callMoodle(name, args);
         return { jsonrpc: '2.0', id, result };
       }
