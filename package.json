@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node ./src/index.js",
-    "check": "node --check ./src/index.js"
+    "check": "node --check ./src/index.js && node --check ./tests/speaker_guard.test.mjs",
+    "test": "node --test ./tests/speaker_guard.test.mjs"
   },
   "engines": {
     "node": ">=18"
