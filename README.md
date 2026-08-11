@@ -1,4 +1,4 @@
-# DAMI Moodle Robot MCP Server v0.2.1
+# DAMI Moodle Robot MCP Server v0.2.2
 
 Zero-dependency MCP STDIO server for Xiaozhi/imcp. This version does **not** use `@modelcontextprotocol/sdk`, so it is lighter and easier for hosted MCP gateways to run from GitHub with `npx`.
 
@@ -34,25 +34,45 @@ MOODLE_API_TOKEN=PUT_YOUR_TOKEN_HERE
 REQUEST_TIMEOUT_MS=15000
 MOODLE_TOOL_ENDPOINT=https://elearning.anhngumsmy.com/local/damirobot_api/api/tool.php
 
-# Speaker authorization gate. Enabled by default.
-MCP_SPEAKER_GUARD=1
-
-# Optional stricter whitelist. Leave empty to allow any Xiaozhi-recognized speakerId.
+# Optional stricter whitelist.
+# Leave empty to allow any non-empty speakerId produced by Xiaozhi voiceprint recognition.
 # Example: ALLOWED_SPEAKER_IDS=id_1,id_2
 ALLOWED_SPEAKER_IDS=
 ```
 
 ## Speaker authorization gate
 
-All student-data tools are fail-closed before Moodle is called.
+All student-data tools are mandatory fail-closed before Moodle is called.
 
-- `speakerId` missing/null: denied.
-- `speakerId` present: allowed when `ALLOWED_SPEAKER_IDS` is empty.
-- If `ALLOWED_SPEAKER_IDS` is configured, only IDs in that list are allowed.
-- `test_connection` remains available without speaker recognition so Xiaozhi can verify the MCP transport.
-- Set `MCP_SPEAKER_GUARD=0` only for temporary diagnostics; production should keep it enabled.
+- Missing/null/invalid `speakerId`: denied.
+- Sentinel values such as `null`, `undefined`, `unknown`, `anonymous`, `guest`, `none`: denied.
+- `speakerId` must come from Xiaozhi top-level `params.speakerId`; `_meta.speakerId` is accepted as fallback.
+- `arguments.speakerId` is deliberately ignored, so the LLM/tool arguments cannot grant access to themselves.
+- When `ALLOWED_SPEAKER_IDS` is empty, any valid Xiaozhi-recognized `speakerId` is accepted. This supports adding a new registered speaker without firmware changes or MCP code changes.
+- When `ALLOWED_SPEAKER_IDS` is configured, only exact IDs in that list are accepted.
+- `test_connection` remains available without speaker recognition because it exposes no student data.
+- There is no environment-variable bypass for the student-data guard.
 
-The gate reads Xiaozhi's top-level `params.speakerId` (with `_meta.speakerId` as fallback). Authorization is decided server-side, not from the LLM prompt or tool arguments.
+### Context isolation
+
+The MCP server tracks the current recognized speaker so follow-up questions can work safely.
+
+- Same authorized `speakerId`: student follow-up context may be reused.
+- Different authorized `speakerId`: student/course/group follow-up context is cleared before the next data call.
+- Missing/denied speaker: all speaker-bound context is cleared.
+
+This prevents a later speaker from inheriting the previous speaker's selected student.
+
+## Tests
+
+```text
+npm run check
+npm test
+```
+
+The regression suite verifies fail-closed behavior, argument spoof rejection, malformed speaker IDs, optional explicit allowlists, speaker-switch context isolation, same-speaker follow-up context, and the non-sensitive `test_connection` exception.
+
+GitHub Actions runs these checks on pushes and pull requests to `main`.
 
 ## Tools
 
