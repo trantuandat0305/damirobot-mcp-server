@@ -10,6 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function startFakeMoodle() {
   let calls = 0;
+  let lastPayload = null;
   const server = http.createServer(async (req, res) => {
     calls += 1;
     const chunks = [];
@@ -17,12 +18,15 @@ async function startFakeMoodle() {
     const body = Buffer.concat(chunks).toString('utf8');
     let payload = {};
     try { payload = body ? JSON.parse(body) : {}; } catch {}
+    lastPayload = payload;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
       reply_text: `FAKE_OK:${payload.tool || 'unknown'}`,
       emotion: 'neutral',
-      student: { id: 123, name: payload.student_name || 'Test Student' },
+      student: payload.student_name || payload.userid
+        ? { id: payload.userid || 123, name: payload.student_name || 'Test Student' }
+        : null,
     }));
   });
   server.listen(0, '127.0.0.1');
@@ -31,7 +35,8 @@ async function startFakeMoodle() {
   return {
     url: `http://127.0.0.1:${address.port}`,
     calls: () => calls,
-    reset: () => { calls = 0; },
+    lastPayload: () => lastPayload,
+    reset: () => { calls = 0; lastPayload = null; },
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -46,7 +51,6 @@ function startMcp(fakeMoodleUrl, extraEnv = {}) {
       MOODLE_TOOL_ENDPOINT: '/tool',
       MOODLE_API_TOKEN: 'test-token',
       REQUEST_TIMEOUT_MS: '1000',
-      MCP_SPEAKER_GUARD: '1',
       ALLOWED_SPEAKER_IDS: '',
       LOG_LEVEL: 'debug',
       ...extraEnv,
@@ -92,44 +96,62 @@ function startMcp(fakeMoodleUrl, extraEnv = {}) {
     await once(child, 'exit');
   }
 
-  return { child, call, stop };
+  return { call, stop };
 }
 
 function resultText(response) {
   return response?.result?.content?.map((item) => item.text || '').join('\n') || '';
 }
 
+function assertBlocked(response, moodle) {
+  assert.match(resultText(response), /chưa được cấp quyền/i);
+  assert.equal(response.result.isError, true);
+  assert.equal(moodle.calls(), 0);
+}
+
 test('missing speakerId is fail-closed and never reaches Moodle', async () => {
   const moodle = await startFakeMoodle();
   const mcp = startMcp(moodle.url);
   try {
-    const response = await mcp.call('find_student', { student_name: 'Nguyen Van A' });
-    assert.match(resultText(response), /chưa được nhận diện/i);
-    assert.equal(response.result.isError, true);
-    assert.equal(moodle.calls(), 0);
+    assertBlocked(await mcp.call('find_student', { student_name: 'Nguyen Van A' }), moodle);
   } finally {
     await mcp.stop();
     await moodle.close();
   }
 });
 
-test('LLM cannot spoof authorization by putting speakerId inside arguments', async () => {
+test('LLM cannot grant itself access through arguments.speakerId', async () => {
   const moodle = await startFakeMoodle();
   const mcp = startMcp(moodle.url);
   try {
-    const response = await mcp.call('get_student_summary', {
+    assertBlocked(await mcp.call('get_student_summary', {
       student_name: 'Nguyen Van A',
       speakerId: 'fake-speaker-from-arguments',
-    });
-    assert.match(resultText(response), /chưa được nhận diện/i);
-    assert.equal(moodle.calls(), 0);
+    }), moodle);
   } finally {
     await mcp.stop();
     await moodle.close();
   }
 });
 
-test('recognized Xiaozhi speakerId is allowed when automatic registered-speaker mode is used', async () => {
+test('sentinel and malformed speaker IDs are rejected', async () => {
+  for (const speakerId of ['null', 'undefined', 'unknown', 'anonymous', 'guest', 'none', {}, []]) {
+    const moodle = await startFakeMoodle();
+    const mcp = startMcp(moodle.url);
+    try {
+      assertBlocked(await mcp.call(
+        'get_student_summary',
+        { student_name: 'Nguyen Van A' },
+        { speakerId },
+      ), moodle);
+    } finally {
+      await mcp.stop();
+      await moodle.close();
+    }
+  }
+});
+
+test('recognized Xiaozhi speakerId is allowed in automatic registered-speaker mode', async () => {
   const moodle = await startFakeMoodle();
   const mcp = startMcp(moodle.url);
   try {
@@ -168,15 +190,13 @@ test('explicit allowlist rejects other recognized speakers and accepts listed sp
   const moodle = await startFakeMoodle();
   const mcp = startMcp(moodle.url, { ALLOWED_SPEAKER_IDS: 'teacher-1, teacher-2' });
   try {
-    let response = await mcp.call(
+    assertBlocked(await mcp.call(
       'get_missing_homework',
       { student_name: 'Nguyen Van A' },
       { speakerId: 'student-voiceprint' },
-    );
-    assert.match(resultText(response), /chưa được nhận diện/i);
-    assert.equal(moodle.calls(), 0);
+    ), moodle);
 
-    response = await mcp.call(
+    const response = await mcp.call(
       'get_missing_homework',
       { student_name: 'Nguyen Van A' },
       { speakerId: 'teacher-2' },
@@ -201,9 +221,61 @@ test('blocked request clears previous student context', async () => {
     assert.match(resultText(response), /FAKE_OK:find_student/);
     assert.equal(moodle.calls(), 1);
 
-    response = await mcp.call('get_student_summary', {});
-    assert.match(resultText(response), /chưa được nhận diện/i);
+    moodle.reset();
+    assertBlocked(await mcp.call('get_student_summary', {}), moodle);
+
+    response = await mcp.call(
+      'get_student_summary',
+      {},
+      { speakerId: 'teacher-1' },
+    );
+    assert.match(resultText(response), /FAKE_OK:get_student_summary/);
     assert.equal(moodle.calls(), 1);
+    assert.equal(moodle.lastPayload()?.student_name, undefined);
+    assert.equal(moodle.lastPayload()?.userid, undefined);
+  } finally {
+    await mcp.stop();
+    await moodle.close();
+  }
+});
+
+test('student follow-up context never crosses from one authorized speaker to another', async () => {
+  const moodle = await startFakeMoodle();
+  const mcp = startMcp(moodle.url);
+  try {
+    let response = await mcp.call(
+      'find_student',
+      { student_name: 'Student Of Teacher One' },
+      { speakerId: 'teacher-1' },
+    );
+    assert.match(resultText(response), /FAKE_OK:find_student/);
+
+    moodle.reset();
+    response = await mcp.call(
+      'get_student_summary',
+      {},
+      { speakerId: 'teacher-2' },
+    );
+    assert.match(resultText(response), /FAKE_OK:get_student_summary/);
+    assert.equal(moodle.calls(), 1);
+    assert.equal(moodle.lastPayload()?.student_name, undefined);
+    assert.equal(moodle.lastPayload()?.userid, undefined);
+  } finally {
+    await mcp.stop();
+    await moodle.close();
+  }
+});
+
+test('same authorized speaker keeps follow-up student context', async () => {
+  const moodle = await startFakeMoodle();
+  const mcp = startMcp(moodle.url);
+  try {
+    let response = await mcp.call(
+      'find_student',
+      { student_name: 'Follow Up Student' },
+      { speakerId: 'teacher-1' },
+    );
+    assert.match(resultText(response), /FAKE_OK:find_student/);
 
     moodle.reset();
     response = await mcp.call(
@@ -213,6 +285,7 @@ test('blocked request clears previous student context', async () => {
     );
     assert.match(resultText(response), /FAKE_OK:get_student_summary/);
     assert.equal(moodle.calls(), 1);
+    assert.equal(String(moodle.lastPayload()?.userid), '123');
   } finally {
     await mcp.stop();
     await moodle.close();
